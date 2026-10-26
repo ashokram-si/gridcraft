@@ -380,6 +380,39 @@ fn save_keeps_a_csv_with_more_sheets_open_and_says_why() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A CSV keeps the displayed values only. When the workbook gained a formula or formatting since it
+/// was opened, Save in the close question still writes the file, but the workbook stays open and
+/// says why, so the formula or formatting isn't lost without asking; Don't Save then closes it.
+#[test]
+fn save_keeps_a_csv_with_a_formula_or_formatting_open_and_says_why() {
+    for (test, edit, arg) in [
+        ("close-csv-formula", "cell.set", serde_json::json!({"cell": "B2", "input": "=A2+5"})),
+        ("close-csv-format", "home.bold", serde_json::json!({"range": "A1", "on": true})),
+    ] {
+        let (dir, path, mut h) = open_csv(test);
+        h.state_mut().run(edit, arg).unwrap();
+        h.run_steps(2);
+
+        let sent = request_window_close(&mut h);
+        assert!(sent.contains(&egui::ViewportCommand::CancelClose), "{test}: {sent:?}");
+        let sent = click_commands(&mut h, "Save");
+        assert!(!sent.contains(&egui::ViewportCommand::Close), "{test}: the quit stops: {sent:?}");
+        assert!(is_open(&h, &path), "{test}: the workbook stays open");
+        let message = h.state().message.as_ref().map(|(_, m)| m.clone()).unwrap_or_default();
+        assert!(message.contains("formulas and formatting"), "{test}: {message:?}");
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.starts_with(if edit == "cell.set" { "a,b\r\n1,6" } else { "a,b\r\n1,2" }), "{test}: {written:?}");
+        h.state_mut().message = None;
+
+        h.state_mut().run_or_alert("file.close", serde_json::json!({}));
+        h.run_steps(3);
+        assert_eq!(h.state().dialog.as_ref().map(|d| d.name()), Some("saveChanges"), "{test}");
+        click(&mut h, "Don't Save");
+        assert!(!is_open(&h, &path), "{test}: Don't Save closes it");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 /// A workbook that was never saved has no file for Save to write: it asks where, and stays open.
 #[test]
 fn file_close_then_save_on_a_new_workbook_asks_where_and_stays_open() {
