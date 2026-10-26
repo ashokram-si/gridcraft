@@ -381,20 +381,6 @@ pub struct SheetApp {
     updates_rt: updates_ui::Runtime,
 }
 
-/// Whether a text file (CSV) written from this workbook holds every change made since it was
-/// opened or last saved in full: one sheet, no formulas, no formatting or layout edits and no
-/// defined names. A text file keeps only the displayed values (#2607), so anything else is lost
-/// when it closes. The view (active cell, scroll position) isn't a change: Save stores it first.
-fn text_file_keeps_changes(doc: &gridcraft_engine::DocState) -> bool {
-    use gridcraft_engine::model::{CellStore, Sheet};
-    let ([now], Some(then)) = (doc.wb.sheets.as_slice(), doc.saved.sheets.first()) else { return false };
-    let layout = |sh: &Sheet| Sheet { cells: CellStore::default(), view_active: then.view_active, view_top_left: then.view_top_left, ..sh.clone() };
-    doc.wb.names == doc.saved.names
-        && now.cells.iter().all(|(c, cell)| cell.formula.is_none() && cell.style == then.style_id(c))
-        && then.cells.iter().all(|(c, cell)| now.style_id(c) == cell.style)
-        && layout(now) == layout(then)
-}
-
 impl SheetApp {
     /// Constructs a `SheetApp` with default UI, grid, printing, control and screenshot state and the caller's session and services.
     pub fn new(session: Session, services: Services) -> SheetApp {
@@ -1429,21 +1415,15 @@ impl SheetApp {
                 };
                 // A text file (CSV) holds only the active sheet's values, so the workbook still
                 // reads as edited after saving one (#2607). Save asked for that file, so the workbook
-                // closes once it's written, unless the file left out sheets, formulas or formatting.
-                let Some((dirty, sheets, kept)) = self.session.active().map(|d| (d.is_dirty(), d.wb.sheets.len(), text_file_keeps_changes(d))) else {
-                    return true;
-                };
-                if !dirty || (written && kept) {
+                // closes once it's written, unless it has sheets the file left out.
+                let Some((dirty, sheets)) = self.session.active().map(|d| (d.is_dirty(), d.wb.sheets.len())) else { return true };
+                if !dirty || (written && sheets == 1) {
                     self.run_or_alert("file.close", json!({"force": true, "document": true}));
                     if quitting {
                         self.continue_quit(ctx);
                     }
                 } else if written {
-                    let text = if sheets > 1 {
-                        "This file type keeps only the active sheet, so the other sheets weren't saved. To keep them, save the workbook as an Excel Workbook (.xlsx) with Save As, or close it with Don't Save."
-                    } else {
-                        "This file type keeps only the values as they're displayed, so formulas, formatting and names weren't saved. To keep them, save the workbook as an Excel Workbook (.xlsx) with Save As, or close it with Don't Save."
-                    };
+                    let text = "This file type keeps only the active sheet, so the other sheets weren't saved. To keep them, save the workbook as an Excel Workbook (.xlsx) with Save As, or close it with Don't Save.";
                     self.message = Some(("GridCraft".into(), self.ui.language.tr(text).into()));
                 }
             }
