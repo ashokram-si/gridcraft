@@ -327,6 +327,24 @@ fn closing_the_window_saves_a_csv_and_closes_instead_of_asking_again() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Moving the active cell before editing is not a change the CSV loses: Save stores the view in the
+/// workbook first, and the workbook still closes.
+#[test]
+fn file_close_then_save_closes_a_csv_after_the_active_cell_moved() {
+    let (dir, path, mut h) = open_csv("close-csv-moved");
+    h.state_mut().run("selection.set", serde_json::json!({"range": "B2"})).unwrap();
+    h.state_mut().run("cell.set", serde_json::json!({"cell": "B2", "input": "9"})).unwrap();
+    h.run_steps(2);
+    h.state_mut().run_or_alert("file.close", serde_json::json!({}));
+    h.run_steps(3);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name()), Some("saveChanges"));
+    click(&mut h, "Save");
+    assert!(!is_open(&h, &path), "Save wrote the CSV and closed the workbook");
+    assert!(h.state().message.is_none(), "{:?}", h.state().message);
+    assert!(std::fs::read_to_string(&path).unwrap().starts_with("a,b\r\n1,9"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// File › Close on an edited CSV: Cancel keeps it open and unwritten; Save writes it and closes it.
 #[test]
 fn file_close_then_save_writes_a_csv_and_closes_it() {
@@ -380,14 +398,15 @@ fn save_keeps_a_csv_with_more_sheets_open_and_says_why() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A CSV keeps the displayed values only. When the workbook gained a formula or formatting since it
-/// was opened, Save in the close question still writes the file, but the workbook stays open and
+/// A CSV keeps the displayed values only. When the workbook gained a formula, formatting or a
+/// defined name since it was opened, Save in the close question still writes the file, but the workbook stays open and
 /// says why, so the formula or formatting isn't lost without asking; Don't Save then closes it.
 #[test]
-fn save_keeps_a_csv_with_a_formula_or_formatting_open_and_says_why() {
+fn save_keeps_a_csv_with_a_formula_formatting_or_a_name_open_and_says_why() {
     for (test, edit, arg) in [
         ("close-csv-formula", "cell.set", serde_json::json!({"cell": "B2", "input": "=A2+5"})),
         ("close-csv-format", "home.bold", serde_json::json!({"range": "A1", "on": true})),
+        ("close-csv-name", "formulas.defineName", serde_json::json!({"name": "Price", "refersTo": "=Sheet1!$A$2"})),
     ] {
         let (dir, path, mut h) = open_csv(test);
         h.state_mut().run(edit, arg).unwrap();
@@ -399,7 +418,7 @@ fn save_keeps_a_csv_with_a_formula_or_formatting_open_and_says_why() {
         assert!(!sent.contains(&egui::ViewportCommand::Close), "{test}: the quit stops: {sent:?}");
         assert!(is_open(&h, &path), "{test}: the workbook stays open");
         let message = h.state().message.as_ref().map(|(_, m)| m.clone()).unwrap_or_default();
-        assert!(message.contains("formulas and formatting"), "{test}: {message:?}");
+        assert!(message.contains("formulas, formatting and names"), "{test}: {message:?}");
         let written = std::fs::read_to_string(&path).unwrap();
         assert!(written.starts_with(if edit == "cell.set" { "a,b\r\n1,6" } else { "a,b\r\n1,2" }), "{test}: {written:?}");
         h.state_mut().message = None;

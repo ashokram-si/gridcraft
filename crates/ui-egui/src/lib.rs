@@ -382,15 +382,17 @@ pub struct SheetApp {
 }
 
 /// Whether a text file (CSV) written from this workbook holds every change made since it was
-/// opened or last saved in full: one sheet, no formulas, and no formatting or layout edits. A
-/// text file keeps only the displayed values (#2607), so anything else is lost when it closes.
+/// opened or last saved in full: one sheet, no formulas, no formatting or layout edits and no
+/// defined names. A text file keeps only the displayed values (#2607), so anything else is lost
+/// when it closes. The view (active cell, scroll position) isn't a change: Save stores it first.
 fn text_file_keeps_changes(doc: &gridcraft_engine::DocState) -> bool {
     use gridcraft_engine::model::{CellStore, Sheet};
     let ([now], Some(then)) = (doc.wb.sheets.as_slice(), doc.saved.sheets.first()) else { return false };
-    let without_cells = |sh: &Sheet| Sheet { cells: CellStore::default(), ..sh.clone() };
-    now.cells.iter().all(|(c, cell)| cell.formula.is_none() && cell.style == then.style_id(c))
+    let layout = |sh: &Sheet| Sheet { cells: CellStore::default(), view_active: then.view_active, view_top_left: then.view_top_left, ..sh.clone() };
+    doc.wb.names == doc.saved.names
+        && now.cells.iter().all(|(c, cell)| cell.formula.is_none() && cell.style == then.style_id(c))
         && then.cells.iter().all(|(c, cell)| now.style_id(c) == cell.style)
-        && without_cells(now) == without_cells(then)
+        && layout(now) == layout(then)
 }
 
 impl SheetApp {
@@ -1440,7 +1442,7 @@ impl SheetApp {
                     let text = if sheets > 1 {
                         "This file type keeps only the active sheet, so the other sheets weren't saved. To keep them, save the workbook as an Excel Workbook (.xlsx) with Save As, or close it with Don't Save."
                     } else {
-                        "This file type keeps only the values as they're displayed, so formulas and formatting weren't saved. To keep them, save the workbook as an Excel Workbook (.xlsx) with Save As, or close it with Don't Save."
+                        "This file type keeps only the values as they're displayed, so formulas, formatting and names weren't saved. To keep them, save the workbook as an Excel Workbook (.xlsx) with Save As, or close it with Don't Save."
                     };
                     self.message = Some(("GridCraft".into(), self.ui.language.tr(text).into()));
                 }
